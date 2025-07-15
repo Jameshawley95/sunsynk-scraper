@@ -1,5 +1,7 @@
 # 🌞 Sunsynk Discord Bot
 
+![Bot Preview](solarbotDiscord.png)
+
 A Python bot that scrapes live solar stats from the Sunsynk web portal and updates a message in Discord with realtime solar, battery, and grid info.
 
 ## Features
