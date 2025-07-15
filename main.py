@@ -17,6 +17,22 @@ plant_url = os.getenv("PLANT_URL")
 full_alert_sent = False
 low_alert_sent = False
 
+def update_env_variable(key, value):
+    lines = []
+    found = False
+    if os.path.exists(".env"):
+        with open(".env", "r") as f:
+            for line in f:
+                if line.startswith(f"{key}="):
+                    lines.append(f"{key}={value}\n")
+                    found = True
+                else:
+                    lines.append(line)
+    if not found:
+        lines.append(f"{key}={value}\n")
+    with open(".env", "w") as f:
+        f.writelines(lines)
+
 # Battery alerts
 def send_discord_alert_1(soc, battery_power):
     requests.post(discordWebHook, json={
@@ -42,7 +58,7 @@ def build_battery_bar(soc, length=15):
     empty_part = '░' * empty
     return f"\u001b[0;1m🔋 Battery:\u001b[0m\u001b[1;37m{soc:>4}%\u001b[0m  {green}{empty_part}"
 
-# 🕸 Scrape and post loop
+# Scrape and post loop
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, slow_mo=200)
     page = browser.new_page()
@@ -59,7 +75,7 @@ with sync_playwright() as p:
     page.wait_for_selector('.box.grid-box .power.f16 span', timeout=10000)
 
     while True:
-        # 📊 Scrape values
+        # scrape values from the plant dashboard
         grid_power = page.locator('.box.grid-box .power.f16 span').text_content()
         load_power = page.locator('.box.load-box .power.f16 span').text_content()
         battery_power = page.locator('.bettey-box .power.f16 span').text_content()
@@ -87,16 +103,14 @@ with sync_playwright() as p:
         else:
             battery_direction = "steady"
 
-        # ⌚ Format timestamp
         timestamp = datetime.now().strftime("%H:%M %d/%m/%Y")
 
-        # 🔧 Build bars
-        solar_bar = build_coloured_bar("☀️", "Solar:", pv_value, 100, "32")
-        load_bar = build_coloured_bar("💡", "Load:", load_value, 100, "31")
-        grid_bar = build_coloured_bar("🔌", "Grid:", grid_value, 100, "33")
+        solar_bar = build_coloured_bar("\u2600\ufe0f", "Solar:", pv_value, 100, "32")
+        load_bar = build_coloured_bar("\ud83d\udca1", "Load:", load_value, 100, "31")
+        grid_bar = build_coloured_bar("\ud83d\udd0c", "Grid:", grid_value, 100, "33")
         battery_bar = f"{build_battery_bar(soc_value)} {battery_direction} @ \u001b[1;37m{battery_power}\u001b[0m"
 
-        # 📨 Final message
+        #discord message output
         message = (
             f"<@&{solar_role}>\n"
             f"```ansi\n"
@@ -108,13 +122,28 @@ with sync_playwright() as p:
             f"```"
         )
 
-        # 🛠 Update Discord message
         edit_url = f"{discordWebHook}/messages/{message_id}"
         resp = requests.patch(edit_url, json={"content": message})
+        # if message does not already exist create a new one and save the ID
         if not resp.ok:
-            print(f"❌ Patch failed → {resp.status_code} {resp.text}")
+            print(f"Patch failed → {resp.status_code} {resp.text}")
+            print("Creating a new message instead...")
+            webhook_base = discordWebHook.split("/messages")[0]
+            post_resp = requests.post(f"{webhook_base}?wait=true", json={"content": message})
 
-        # 🚨 Alert logic
+            if post_resp.ok:
+                try:
+                    new_message = post_resp.json()
+                    new_message_id = new_message["id"]
+                    print("Message created successfully.")
+                    print(f"Updating .env with: MESSAGE_ID={new_message_id}")
+                    update_env_variable("MESSAGE_ID", new_message_id)
+                    message_id = new_message_id
+                except ValueError:
+                    print("Message sent but failed to parse JSON. Update .env manually.")
+            else:
+                print(f"Failed to send new message → {post_resp.status_code} {post_resp.text}")
+
         if soc_value >= 95 and not full_alert_sent:
             send_discord_alert_1(battery_soc, battery_power)
             full_alert_sent = True
