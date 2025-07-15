@@ -1,4 +1,4 @@
-# 🌞 Sunsynk Discord Bot
+# 🌞 Sunsynk Discord Bot (not official)
 
 ![Bot Preview](solarbot-discord.png)
 
@@ -27,3 +27,11 @@ SOLAR_ROLE=123456789012345678 #discord role id which will be sent notifications
 MESSAGE_ID=123456789012345678 #discord message id which will be updated every minute
 
 3. run start.bat
+
+### Disclaimer
+
+This project is an independent tool developed for personal and educational use.  
+It is **not affiliated with, endorsed by, or supported by Sunsynk** in any way.
+
+All data scraping is done via publicly accessible user portals with user-provided credentials.  
+Use this tool at your own risk. Respect Sunsynk's Terms of Service when using this bot.
