@@ -2,8 +2,10 @@ from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 import os
 import time
+import math
 from datetime import datetime
 import requests
+from solar_peak import track_solar_peak
 
 # Load environment variables
 load_dotenv()
@@ -52,7 +54,8 @@ def build_coloured_bar(icon, label, value, unit, colour_code):
 
 # Battery bar by % with green blocks and remaining light grey
 def build_battery_bar(soc, length=15):
-    filled = int((soc / 100) * length)
+    filled = math.ceil((soc / 100) * length)
+    filled = min(filled, length)
     empty = length - filled
     green = ''.join("\u001b[1;34;48m█\u001b[0m" for _ in range(filled))
     empty_part = '░' * empty
@@ -88,13 +91,17 @@ with sync_playwright() as p:
         soc_value = int(battery_soc.strip().replace("%", ""))
         total_input = pv_value + grid_value
 
-        selling_to_grid = soc_value >= 99 and pv_value > load_value
         if grid_value == 0:
-            grid_display = f"{grid_power} 👍"
-        elif selling_to_grid:
-            grid_display = f"-{grid_power} 🤑"
+            grid_display = f"{grid_value} 👍"
+        elif soc_value >= 99 and pv_value > load_value:
+            grid_value = -abs(grid_value)
+            grid_display = f"{grid_value}"
         else:
-            grid_display = grid_power
+            grid_display = f"{grid_value}"
+
+        grid_bar_blocks = max(1, abs(grid_value) // 100)
+        grid_bar_visual = ''.join(f"\u001b[1;33;48m█\u001b[0m" for _ in range(grid_bar_blocks))
+        grid_bar_emoji = " 🤑" if grid_value < 0 else ""
 
         if total_input > load_value:
             battery_direction = "charging"
@@ -107,7 +114,7 @@ with sync_playwright() as p:
 
         solar_bar = build_coloured_bar("\u2600\ufe0f", "Solar:", pv_value, 100, "32")
         load_bar = build_coloured_bar("\ud83d\udca1", "Load:", load_value, 100, "31")
-        grid_bar = build_coloured_bar("\ud83d\udd0c", "Grid:", grid_value, 100, "33")
+        grid_bar = f"\u001b[0;1m🔌 Grid: \u001b[1;37m{grid_value:>5}W \u001b[0m  {grid_bar_visual}{grid_bar_emoji}"
         battery_bar = f"{build_battery_bar(soc_value)} {battery_direction} @ \u001b[1;37m{battery_power}\u001b[0m"
 
         #discord message output
@@ -144,6 +151,8 @@ with sync_playwright() as p:
             else:
                 print(f"Failed to send new message → {post_resp.status_code} {post_resp.text}")
 
+        track_solar_peak(pv_value, timestamp)
+
         if soc_value >= 95 and not full_alert_sent:
             send_discord_alert_1(battery_soc, battery_power)
             full_alert_sent = True
@@ -156,4 +165,5 @@ with sync_playwright() as p:
         elif soc_value > 20:
             low_alert_sent = False
 
+        # Wait before the next scrape, value is in seconds
         time.sleep(60)
