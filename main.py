@@ -1,21 +1,23 @@
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
+from datetime import datetime
+from solar_peak import track_solar_peak
+from solar_visuals import build_coloured_bar, build_battery_bar, build_grid_bar, calculate_grid_flow
+from login import login_to_sunsynk
 import os
 import time
-import math
-from datetime import datetime
 import requests
-from solar_peak import track_solar_peak
+import threading
+import signal
+import sys
 
 # Load environment variables
 load_dotenv()
-email = os.getenv("SUNSYNK_USERNAME")
-password = os.getenv("SUNSYNK_PASSWORD")
+
 discordWebHook = os.getenv("DISCORD_WEBHOOK_URL")
 solar_role = os.getenv("SOLAR_ROLE")
 message_id = os.getenv("MESSAGE_ID")
-plant_url = os.getenv("PLANT_URL")
-
+start_time = time.time()
 full_alert_sent = False
 low_alert_sent = False
 
@@ -35,6 +37,22 @@ def update_env_variable(key, value):
     with open(".env", "w") as f:
         f.writelines(lines)
 
+def print_uptime():
+    while True:
+        elapsed = int(time.time() - start_time)
+        hours, remainder = divmod(elapsed, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        print(f"\rBot Uptime: {hours:02}:{minutes:02}:{seconds:02} ", end="")
+        time.sleep(1)
+
+def clean_exit(signum, frame):
+    print("\n🔌 Shutting down... Closing browser and exiting.")
+    try:
+        browser.close()
+    except Exception:
+        pass
+    sys.exit(0)
+
 # Battery alerts
 def send_discord_alert_1(soc, battery_power):
     requests.post(discordWebHook, json={
@@ -46,75 +64,54 @@ def send_discord_alert_2(soc, battery_power):
         "content": f"<@&{solar_role}>\n🔋 LOW BATTERY!!! {soc}⚠️"
     })
 
-# Simple coloured block bar per 100W
-def build_coloured_bar(icon, label, value, unit, colour_code):
-    blocks = max(1, value // unit)
-    bar = ''.join(f"\u001b[1;{colour_code};48m█\u001b[0m" for _ in range(blocks))
-    return f"\u001b[0;1m{icon} {label:<7}\u001b[1;37m{value:>4}W \u001b[0m  {bar}"
-
-# Battery bar by % with green blocks and remaining light grey
-def build_battery_bar(soc, length=15):
-    filled = math.ceil((soc / 100) * length)
-    filled = min(filled, length)
-    empty = length - filled
-    green = ''.join("\u001b[1;34;48m█\u001b[0m" for _ in range(filled))
-    empty_part = '░' * empty
-    return f"\u001b[0;1m🔋 Battery:\u001b[0m\u001b[1;37m{soc:>4}%\u001b[0m  {green}{empty_part}"
-
 # Scrape and post loop
 with sync_playwright() as p:
+    signal.signal(signal.SIGINT, clean_exit)   # Ctrl+C
+    signal.signal(signal.SIGTERM, clean_exit)  # kill signal from OS
+
     browser = p.chromium.launch(headless=True, slow_mo=200)
-    page = browser.new_page()
-    page.goto("https://www.sunsynk.net/")
 
-    # Login
-    page.locator('input[placeholder="Please input your E-mail"]').fill(email)
-    page.locator('input[placeholder="Please re-enter password"]').fill(password)
-    page.locator('button:has-text("Login")').click()
+    page = login_to_sunsynk(browser)
 
-    # Navigate to overview
-    page.wait_for_url("**/plants")
-    page.goto(plant_url)
-    page.wait_for_selector('.box.grid-box .power.f16 span', timeout=10000)
+    threading.Thread(target=print_uptime, daemon=True).start()
 
     while True:
-        # scrape values from the plant dashboard
-        grid_power = page.locator('.box.grid-box .power.f16 span').text_content()
-        load_power = page.locator('.box.load-box .power.f16 span').text_content()
-        battery_power = page.locator('.bettey-box .power.f16 span').text_content()
-        battery_soc = page.locator('.soc span').text_content()
-        pv_power = page.locator('.box.pv-box .power.f16').text_content()
+        try:
+            # scrape values from the plant dashboard
+            grid_power = page.locator('.box.grid-box .power.f16 span').text_content()
+            load_power = page.locator('.box.load-box .power.f16 span').text_content()
+            battery_power = page.locator('.bettey-box .power.f16 span').text_content()
+            battery_soc = page.locator('.soc span').text_content()
+            pv_power = page.locator('.box.pv-box .power.f16').text_content()
+
+        except Exception as e:
+            print(f"\nScrape failed: {e}")
+            print("Attempting to re-login...\n")
+
+            try:
+                login_to_sunsynk(browser)
+            except Exception as login_err:
+                print(f"Re-login also failed: {login_err}")
+                print("Waiting 60 seconds before trying again...\n")
+                time.sleep(60)
 
         pv_value = int(pv_power.replace("W", "").strip())
         load_value = int(load_power.replace("W", "").strip())
         grid_value = int(grid_power.replace("W", "").strip())
         soc_value = int(battery_soc.strip().replace("%", ""))
+        battery_watts = int(battery_power.replace("W", "").replace("-", "").strip())
         total_input = pv_value + grid_value
-
-        if grid_value == 0:
-            grid_display = f"{grid_value} 👍"
-        elif soc_value >= 99 and pv_value > load_value:
-            grid_value = -abs(grid_value)
-            grid_display = f"{grid_value}"
-        else:
-            grid_display = f"{grid_value}"
-
-        grid_bar_blocks = max(1, abs(grid_value) // 100)
-        grid_bar_visual = ''.join(f"\u001b[1;33;48m█\u001b[0m" for _ in range(grid_bar_blocks))
-        grid_bar_emoji = " 🤑" if grid_value < 0 else ""
 
         if total_input > load_value:
             battery_direction = "charging"
-        elif total_input < load_value:
-            battery_direction = "discharging"
         else:
-            battery_direction = "steady"
+            battery_direction = "discharging"
 
         timestamp = datetime.now().strftime("%H:%M %d/%m/%Y")
-
+    
         solar_bar = build_coloured_bar("\u2600\ufe0f", "Solar:", pv_value, 100, "32")
         load_bar = build_coloured_bar("\ud83d\udca1", "Load:", load_value, 100, "31")
-        grid_bar = f"\u001b[0;1m🔌 Grid: \u001b[1;37m{grid_value:>5}W \u001b[0m  {grid_bar_visual}{grid_bar_emoji}"
+        grid_bar = build_grid_bar(calculate_grid_flow(pv_value, load_value, battery_watts, grid_value))
         battery_bar = f"{build_battery_bar(soc_value)} {battery_direction} @ \u001b[1;37m{battery_power}\u001b[0m"
 
         #discord message output
