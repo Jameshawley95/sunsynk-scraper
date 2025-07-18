@@ -40,9 +40,10 @@ def update_env_variable(key, value):
 def print_uptime():
     while True:
         elapsed = int(time.time() - start_time)
-        hours, remainder = divmod(elapsed, 3600)
+        days, remainder = divmod(elapsed, 86400)
+        hours, remainder = divmod(remainder, 3600)
         minutes, seconds = divmod(remainder, 60)
-        print(f"\rBot Uptime: {hours:02}:{minutes:02}:{seconds:02} ", end="")
+        print(f"\rBot Uptime: {days}d {hours:02}:{minutes:02}:{seconds:02} ", end="")
         time.sleep(1)
 
 def clean_exit(signum, frame):
