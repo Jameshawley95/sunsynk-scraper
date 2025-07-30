@@ -79,6 +79,7 @@ with sync_playwright() as p:
     while True:
         try:
             # scrape values from the plant dashboard
+            time.sleep(5)  # Ensure page is fully loaded
             grid_power = page.locator('.box.grid-box .power.f16 span').text_content()
             load_power = page.locator('.box.load-box .power.f16 span').text_content()
             battery_power = page.locator('.bettey-box .power.f16 span').text_content()
@@ -94,7 +95,7 @@ with sync_playwright() as p:
             except Exception as login_err:
                 print(f"Re-login also failed: {login_err}")
                 print("Waiting 60 seconds before trying again...\n")
-                time.sleep(60)
+                time.sleep(55)
 
         pv_value = int(pv_power.replace("W", "").strip())
         load_value = int(load_power.replace("W", "").strip())
@@ -102,6 +103,11 @@ with sync_playwright() as p:
         soc_value = int(battery_soc.strip().replace("%", ""))
         battery_watts = int(battery_power.replace("W", "").replace("-", "").strip())
         total_input = pv_value + grid_value
+
+        if pv_value == 0 and load_value == 0 and grid_value == 0 and soc_value == 0:
+            print("Skipping invalid data — all values are 0")
+            time.sleep(55)
+            continue
 
         if total_input > load_value:
             battery_direction = "charging"
@@ -164,4 +170,4 @@ with sync_playwright() as p:
             low_alert_sent = False
 
         # Wait before the next scrape, value is in seconds
-        time.sleep(60)
+        time.sleep(55)
