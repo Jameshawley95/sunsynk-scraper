@@ -5,7 +5,24 @@ password = os.getenv("SUNSYNK_PASSWORD")
 plant_url = os.getenv("PLANT_URL")
 
 def login_to_sunsynk(browser):
-    page = browser.new_page()
+    try:
+        for context in browser.contexts:
+            for page in context.pages:
+                try:
+                    page.close()
+                except:
+                    pass
+            try:
+                context.close()
+            except:
+                pass
+    except Exception as e:
+        print(f"Error during browser cleanup: {e}")
+
+    context = browser.new_context()
+    page = context.new_page()
+
+    print("Attempting to log in...")
     page.goto("https://www.sunsynk.net/")
 
     # Login
@@ -23,7 +40,7 @@ def login_to_sunsynk(browser):
         browser.close()
         exit(1)
 
-    # Navigate to overview
+    # Navigate to overview page
     page.wait_for_url("**/plants")
     page.goto(plant_url)
     page.wait_for_selector('.box.grid-box .power.f16 span', timeout=10000)
